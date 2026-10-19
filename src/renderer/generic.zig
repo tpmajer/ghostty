@@ -216,6 +216,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Whether or not we have custom shaders.
         has_custom_shaders: bool = false,
 
+        /// The cursor as the shaders see it (pixel position, size and
+        /// color) from the last cell rebuild, and whether it changed since
+        /// `takeCursorChanged` was last called. Only tracked with custom
+        /// shaders.
+        last_cursor: ?[8]u32 = null,
+        cursor_changed: bool = false,
+
         /// Our shader pipelines.
         shaders: Shaders,
 
@@ -858,6 +865,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             self.shaders = shaders;
             self.has_custom_shaders = has_custom_shaders;
+            self.last_cursor = null;
         }
 
         /// This is called early right after surface creation.
@@ -1012,6 +1020,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// timer is used.
         pub fn hasAnimations(self: *const Self) bool {
             return self.has_custom_shaders;
+        }
+
+        /// True if the cursor changed since the last call. Must be called
+        /// from the renderer thread.
+        pub fn takeCursorChanged(self: *Self) bool {
+            defer self.cursor_changed = false;
+            return self.cursor_changed;
         }
 
         /// True if our renderer is using vsync. If true, the renderer or apprt
@@ -1376,6 +1391,30 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     comptime assert(@TypeOf(err) == error{OutOfMemory});
                     log.warn("error rebuilding GPU cells err={}", .{err});
                 };
+
+                // Note cursor changes for the cursor animation loop, using
+                // the inputs of the cursor uniforms. A hidden cursor (e.g.
+                // blinking) is not a change.
+                if (self.has_custom_shaders) {
+                    if (self.cells.getCursorGlyph()) |c| {
+                        const cursor: [8]u32 = .{
+                            c.grid_pos[0] * self.size.cell.width + self.size.padding.left,
+                            c.grid_pos[1] * self.size.cell.height + self.size.padding.top,
+                            @bitCast(@as(i32, c.bearings[0])),
+                            @bitCast(@as(i32, c.bearings[1])),
+                            c.glyph_size[0],
+                            c.glyph_size[1],
+                            self.size.cell.height,
+                            @bitCast(c.color),
+                        };
+                        if (self.last_cursor == null or
+                            !std.mem.eql(u32, &cursor, &self.last_cursor.?))
+                        {
+                            self.last_cursor = cursor;
+                            self.cursor_changed = true;
+                        }
+                    }
+                }
 
                 // The scrollbar is only emitted during draws so we also
                 // check the scrollbar cache here and update if needed.

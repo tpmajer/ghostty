@@ -3024,8 +3024,21 @@ keybind: Keybinds = .{},
 /// will use more CPU per terminal surface and can become quite expensive
 /// depending on the shader and your terminal usage.
 ///
+/// This can also be set to `cursor`, which runs the animation loop of the
+/// focused terminal only for `custom-shader-animation-duration` after the
+/// cursor moves or changes. This suits cursor shaders (trails, smears) that
+/// only animate after `iTimeCursorChange` and are idle otherwise.
+///
 /// This can be changed at runtime and will affect all open terminals.
 @"custom-shader-animation": CustomShaderAnimation = .true,
+
+/// How long the animation loop runs after a cursor change when
+/// `custom-shader-animation` is `cursor`. This should be at least as long
+/// as the animation of the shader, or its last frame stays on screen until
+/// the next terminal update.
+///
+/// This can be changed at runtime and will affect all open terminals.
+@"custom-shader-animation-duration": Duration = .{ .duration = 500 * std.time.ns_per_ms },
 
 /// Bell features to enable if bell support is available in your runtime. Not
 /// all features are available on all runtimes. The format of this is a list of
@@ -5206,6 +5219,7 @@ pub const CustomShaderAnimation = enum(c_int) {
     false,
     true,
     always,
+    cursor,
 };
 
 /// Valid values for macos-non-native-fullscreen

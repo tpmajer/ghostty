@@ -62,6 +62,9 @@ draw_h: xev.Timer,
 draw_c: xev.Completion = .{},
 draw_active: bool = false,
 
+/// When the cursor last changed, for `custom-shader-animation = cursor`.
+cursor_changed_at: ?std.time.Instant = null,
+
 /// This async is used to force a draw immediately. This does not
 /// coalesce like the wakeup does.
 draw_now: xev.Async,
@@ -111,10 +114,12 @@ flags: packed struct {
 
 pub const DerivedConfig = struct {
     custom_shader_animation: configpkg.CustomShaderAnimation,
+    custom_shader_animation_duration: u64,
 
     pub fn init(config: *const configpkg.Config) DerivedConfig {
         return .{
             .custom_shader_animation = config.@"custom-shader-animation",
+            .custom_shader_animation_duration = config.@"custom-shader-animation-duration".duration,
         };
     }
 };
@@ -305,6 +310,8 @@ fn syncDrawTimer(self: *Thread) void {
                 .always => break :skip,
                 // Only when focused
                 .true => if (self.flags.focused) break :skip,
+                // Only when focused and shortly after a cursor change
+                .cursor => if (self.flags.focused and self.cursorAnimating()) break :skip,
                 // Never animate
                 .false => {},
             }
@@ -331,6 +338,13 @@ fn syncDrawTimer(self: *Thread) void {
         self,
         drawCallback,
     );
+}
+
+/// True while the cursor animation window is open.
+fn cursorAnimating(self: *const Thread) bool {
+    const changed_at = self.cursor_changed_at orelse return false;
+    const now = std.time.Instant.now() catch return false;
+    return now.since(changed_at) < self.config.custom_shader_animation_duration;
 }
 
 /// Drain the mailbox.
@@ -585,6 +599,11 @@ fn drawCallback(
     // Draw
     t.drawFrame(false);
 
+    // Stop once the cursor animation window closes
+    if (t.config.custom_shader_animation == .cursor and !t.cursorAnimating()) {
+        t.draw_active = false;
+    }
+
     // Only continue if we're still active
     if (t.draw_active) {
         t.draw_h.run(&t.loop, &t.draw_c, DRAW_INTERVAL, Thread, t, drawCallback);
@@ -612,6 +631,15 @@ fn renderCallback(
         t.flags.cursor_blink_visible,
     ) catch |err|
         log.warn("error rendering err={}", .{err});
+
+    // A cursor change opens the cursor animation window
+    if (@hasDecl(rendererpkg.Renderer, "takeCursorChanged") and
+        t.renderer.takeCursorChanged() and
+        t.config.custom_shader_animation == .cursor)
+    {
+        t.cursor_changed_at = std.time.Instant.now() catch null;
+        t.syncDrawTimer();
+    }
 
     // Draw
     t.drawFrame(false);

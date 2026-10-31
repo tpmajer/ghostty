@@ -268,6 +268,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Whether or not we have custom shaders.
         has_custom_shaders: bool = false,
 
+        /// The cursor as the shaders see it (pixel position, size and
+        /// color) from the last cell rebuild and when it last changed.
+        /// Only tracked for `custom-shader-animation = cursor`.
+        last_cursor: ?[8]u32 = null,
+        cursor_changed_at: ?std.Io.Timestamp = null,
+
         /// Our shader pipelines.
         shaders: Shaders,
 
@@ -623,6 +629,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             background_blur: configpkg.Config.BackgroundBlur,
             scroll_to_bottom_on_output: bool,
             custom_shader_animation: configpkg.CustomShaderAnimation,
+            custom_shader_animation_duration: u64,
 
             pub fn init(
                 alloc_gpa: Allocator,
@@ -698,6 +705,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .background_blur = config.@"background-blur",
                     .scroll_to_bottom_on_output = config.@"scroll-to-bottom".output,
                     .custom_shader_animation = config.@"custom-shader-animation",
+                    .custom_shader_animation_duration = config.@"custom-shader-animation-duration".duration,
                     .arena = arena,
                 };
             }
@@ -898,6 +906,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             self.shaders = shaders;
             self.has_custom_shaders = has_custom_shaders;
+            self.last_cursor = null;
         }
 
         /// Callback called by renderer.Thread when it begins.
@@ -1142,6 +1151,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .false => null,
                     .always => draw_interval_ms,
                     .true => if (self.focused) draw_interval_ms else null,
+                    .cursor => if (self.focused and self.cursorAnimating()) draw_interval_ms else null,
                 };
             };
 
@@ -1172,6 +1182,40 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (shader_delay) |s| return .{ .delay_ms = s, .kind = .draw };
 
             return null;
+        }
+
+        /// True while the cursor animation window is open.
+        fn cursorAnimating(self: *const Self) bool {
+            const changed_at = self.cursor_changed_at orelse return false;
+            const now: std.Io.Timestamp = .now(global.io(), .awake);
+            return changed_at.durationTo(now).nanoseconds <
+                self.config.custom_shader_animation_duration;
+        }
+
+        /// Note a cursor change for `custom-shader-animation = cursor`, from
+        /// the inputs of the cursor uniforms. A hidden cursor (e.g. blinking)
+        /// is not a change.
+        fn updateCursorChanged(self: *Self) void {
+            if (!self.has_custom_shaders or
+                self.config.custom_shader_animation != .cursor) return;
+
+            const c = self.cells.getCursorGlyph() orelse return;
+            const cursor: [8]u32 = .{
+                c.grid_pos[0] * self.size.cell.width + self.size.padding.left,
+                c.grid_pos[1] * self.size.cell.height + self.size.padding.top,
+                @bitCast(@as(i32, c.bearings[0])),
+                @bitCast(@as(i32, c.bearings[1])),
+                c.glyph_size[0],
+                c.glyph_size[1],
+                self.size.cell.height,
+                @bitCast(c.color),
+            };
+            if (self.last_cursor) |last| {
+                if (std.mem.eql(u32, &cursor, &last)) return;
+            }
+
+            self.last_cursor = cursor;
+            self.cursor_changed_at = .now(global.io(), .awake);
         }
 
         /// Returns true if the display link is running, meaning frames
@@ -1663,6 +1707,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     comptime assert(@TypeOf(err) == error{OutOfMemory});
                     log.warn("error rebuilding GPU cells err={}", .{err});
                 };
+
+                self.updateCursorChanged();
 
                 // The scrollbar is only emitted during draws so we also
                 // check the scrollbar cache here and update if needed.

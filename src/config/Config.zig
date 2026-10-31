@@ -3275,6 +3275,15 @@ keybind: Keybinds = .{},
 /// This can be changed at runtime and will affect all open terminals.
 @"custom-shader-animation-duration": Duration = .{ .duration = 500 * std.time.ns_per_ms },
 
+/// The shortest cursor move within a row, in columns, that starts the
+/// animation loop when `custom-shader-animation` is `cursor`. A move to
+/// another row always starts it. Set this to the threshold of a shader that
+/// draws nothing for shorter moves, so typing does not run the loop. The
+/// default of 0 starts it on any change.
+///
+/// This can be changed at runtime and will affect all open terminals.
+@"custom-shader-animation-min-columns": u32 = 0,
+
 /// Bell features to enable if bell support is available in your runtime. Not
 /// all features are available on all runtimes. The format of this is a list of
 /// features to enable separated by commas. If you prefix a feature with `no-`

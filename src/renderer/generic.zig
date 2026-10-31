@@ -630,6 +630,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             scroll_to_bottom_on_output: bool,
             custom_shader_animation: configpkg.CustomShaderAnimation,
             custom_shader_animation_duration: u64,
+            custom_shader_animation_min_columns: u32,
 
             pub fn init(
                 alloc_gpa: Allocator,
@@ -706,6 +707,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .scroll_to_bottom_on_output = config.@"scroll-to-bottom".output,
                     .custom_shader_animation = config.@"custom-shader-animation",
                     .custom_shader_animation_duration = config.@"custom-shader-animation-duration".duration,
+                    .custom_shader_animation_min_columns = config.@"custom-shader-animation-min-columns",
                     .arena = arena,
                 };
             }
@@ -1210,11 +1212,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.size.cell.height,
                 @bitCast(c.color),
             };
-            if (self.last_cursor) |last| {
-                if (std.mem.eql(u32, &cursor, &last)) return;
+            const last = self.last_cursor;
+            if (last) |l| {
+                if (std.mem.eql(u32, &cursor, &l)) return;
+            }
+            self.last_cursor = cursor;
+
+            // A move too short for the shader to draw needs no loop, but
+            // later moves must still be measured from this position.
+            if (last) |l| {
+                const min = self.config.custom_shader_animation_min_columns * self.size.cell.width;
+                if (cursor[1] == l[1] and @max(cursor[0], l[0]) - @min(cursor[0], l[0]) < min) return;
             }
 
-            self.last_cursor = cursor;
             self.cursor_changed_at = .now(global.io(), .awake);
         }
 

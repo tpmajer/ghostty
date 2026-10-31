@@ -274,6 +274,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         last_cursor: ?[8]u32 = null,
         cursor_changed_at: ?std.Io.Timestamp = null,
 
+        /// The terminal cursor at the last frame update, to see it move
+        /// while blinked off. Same condition as `last_cursor`.
+        last_cursor_viewport: ?terminal.RenderState.Cursor.Viewport = null,
+
         /// Our shader pipelines.
         shaders: Shaders,
 
@@ -1194,6 +1198,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.config.custom_shader_animation_duration;
         }
 
+        /// True if the cursor must stay visible despite blinking: it just
+        /// moved, or its animation is running. A move also has to show the
+        /// cursor for `updateCursorChanged` to notice it.
+        fn cursorBlinkHeld(self: *Self) bool {
+            if (!self.has_custom_shaders or
+                self.config.custom_shader_animation != .cursor) return false;
+
+            const viewport = self.terminal_state.cursor.viewport;
+            defer self.last_cursor_viewport = viewport;
+            return self.cursorAnimating() or
+                !std.meta.eql(viewport, self.last_cursor_viewport);
+        }
+
         /// Note a cursor change for `custom-shader-animation = cursor`, from
         /// the inputs of the cursor uniforms. A hidden cursor (e.g. blinking)
         /// is not a change.
@@ -1707,7 +1724,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     renderer.cursorStyle(&self.terminal_state, .{
                         .preedit = critical.preedit != null,
                         .focused = self.focused,
-                        .blink_visible = cursor_blink_visible,
+                        .blink_visible = cursor_blink_visible or self.cursorBlinkHeld(),
                     }),
                     &critical.links,
                 ) catch |err| {
